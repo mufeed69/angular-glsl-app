@@ -4,23 +4,17 @@ import {
   NgZone,
   OnDestroy,
   OnInit,
-  ViewChild
+  ViewChild,
+  ViewEncapsulation
 } from '@angular/core';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/Addons.js';
-
-interface UniformEntry<T = any> { value: T; }
-interface Uniforms {
-  uTime: UniformEntry<number>;
-  uColor: UniformEntry<THREE.Color>;
-  uIntensity: UniformEntry<number>;
-  uPulse: UniformEntry<number>;
-}
 
 @Component({
   selector: 'app-three-canvas',
   templateUrl: './three-canvas.html',
-  styleUrls: ['./three-canvas.css']
+  standalone: true,
+  styleUrls: ['./three-canvas.css'],
+  encapsulation: ViewEncapsulation.None
 })
 export class ThreeCanvasComponent implements OnInit, OnDestroy {
   @ViewChild('container', { static: true }) container!: ElementRef<HTMLDivElement>;
@@ -28,17 +22,16 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
   private renderer!: THREE.WebGLRenderer;
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
-  private controls!: OrbitControls;
+  private stars!: THREE.Points;
   private frameId: number | null = null;
   private startTime = performance.now();
 
-  private uniforms!: Uniforms;
-  private sphere!: THREE.Mesh;
+  // UI variables
+  public speed = 2.0;
+  public density = 2000;
 
-  // UI bound variables
-  public orbColor = '#6b8cff';
-  public intensity = 0.5;
-  public pulse = 1.0;
+  // Star uniforms
+  private uniforms!: { uTime: { value: number }, uSpeed: { value: number } };
 
   constructor(private ngZone: NgZone) {}
 
@@ -53,50 +46,57 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(el.clientWidth, el.clientHeight);
+    this.renderer.setClearColor(0x000000, 1); // black background
+
     el.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
 
-    this.camera = new THREE.PerspectiveCamera(50, el.clientWidth / el.clientHeight, 0.1, 100);
-    this.camera.position.set(0, 0, 3);
+    this.camera = new THREE.PerspectiveCamera(60, el.clientWidth / el.clientHeight, 0.1, 1000);
+    this.camera.position.z = 50;
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-    this.scene.add(ambient);
+    // Create star geometry
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(this.density * 3);
+    for (let i = 0; i < this.density; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * 200;
+      positions[i * 3 + 1] = (Math.random() - 0.5) * 200;
+      positions[i * 3 + 2] = -Math.random() * 500; // z
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
-    const point = new THREE.PointLight(0xffffff, 1);
-    point.position.set(5, 5, 5);
-    this.scene.add(point);
-
-    // uniforms for shader
     this.uniforms = {
       uTime: { value: 0 },
-      uColor: { value: new THREE.Color(this.orbColor) },
-      uIntensity: { value: this.intensity },
-      uPulse: { value: this.pulse }
+      uSpeed: { value: this.speed }
     };
 
-    // create sphere geometry
-    const geometry = new THREE.SphereGeometry(1, 128, 128);
+    // Star material using shader for glowing stars
     const material = new THREE.ShaderMaterial({
-      uniforms: this.uniforms as unknown as { [k: string]: { value: any } },
+      uniforms: this.uniforms as any,
       vertexShader: VERTEX_SHADER,
       fragmentShader: FRAGMENT_SHADER,
-      side: THREE.DoubleSide,
-      transparent: true
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
     });
 
-    this.sphere = new THREE.Mesh(geometry, material);
-    this.scene.add(this.sphere);
-
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
+    this.stars = new THREE.Points(geometry, material);
+    this.scene.add(this.stars);
   }
 
   private animate = () => {
     this.frameId = requestAnimationFrame(this.animate);
     const now = performance.now();
     this.uniforms.uTime.value = (now - this.startTime) * 0.001;
-    this.controls.update();
+
+    // Move stars forward
+    const positions = this.stars.geometry.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < positions.count; i++) {
+      positions.setZ(i, positions.getZ(i) + this.speed * 0.1);
+      if (positions.getZ(i) > 5) positions.setZ(i, -500 + Math.random() * 10);
+    }
+    positions.needsUpdate = true;
+
     this.renderer.render(this.scene, this.camera);
   };
 
@@ -111,61 +111,54 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     window.removeEventListener('resize', this.onResize);
     if (this.frameId != null) cancelAnimationFrame(this.frameId);
     this.renderer.dispose();
-    this.sphere.geometry.dispose();
-    (this.sphere.material as THREE.ShaderMaterial).dispose();
+    this.stars.geometry.dispose();
+    (this.stars.material as THREE.ShaderMaterial).dispose();
   }
 
-  // UI callbacks
-  public updateColor(hex: string) {
-    this.uniforms.uColor.value.set(hex);
+  public updateSpeed(v: number) { this.speed = v; this.uniforms.uSpeed.value = v; }
+  public updateDensity(v: number) {
+  this.density = v;
+
+  // Remove old stars
+  this.scene.remove(this.stars);
+  (this.stars.geometry as THREE.BufferGeometry).dispose();
+  (this.stars.material as THREE.ShaderMaterial).dispose();
+
+  // Create new geometry
+  const geometry = new THREE.BufferGeometry();
+  const positions = new Float32Array(this.density * 3);
+  for (let i = 0; i < this.density; i++) {
+    positions[i * 3] = (Math.random() - 0.5) * 200; // x
+    positions[i * 3 + 1] = (Math.random() - 0.5) * 200; // y
+    positions[i * 3 + 2] = -Math.random() * 500; // z
   }
-  public updateIntensity(v: number) {
-    this.uniforms.uIntensity.value = v;
-  }
-  public updatePulse(v: number) {
-    this.uniforms.uPulse.value = v;
-  }
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  // Reuse the same material
+  this.stars = new THREE.Points(geometry, this.stars.material);
+  this.scene.add(this.stars);
 }
 
-// ----------------- GLSL Shaders -----------------
+}
+
+// ---------------- GLSL Shaders ----------------
 const VERTEX_SHADER = `
 precision highp float;
-varying vec3 vPos;
-varying vec3 vNormal;
+uniform float uTime;
+uniform float uSpeed;
+
 void main() {
-  vPos = position;
-  vNormal = normal;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+  gl_PointSize = 2.0 + (50.0 / abs(mvPosition.z));
+  gl_Position = projectionMatrix * mvPosition;
 }
 `;
 
 const FRAGMENT_SHADER = `
 precision highp float;
-uniform float uTime;
-uniform vec3 uColor;
-uniform float uIntensity;
-uniform float uPulse;
-varying vec3 vPos;
-varying vec3 vNormal;
-
-// Simple 3D noise function
-float hash(vec3 p) {
-  return fract(sin(dot(p, vec3(12.9898,78.233,45.164))) * 43758.5453);
-}
-float noise(vec3 p){
-  vec3 i = floor(p);
-  vec3 f = fract(p);
-  float n = mix(mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x),
-                    mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
-                mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
-                    mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
-  return n;
-}
-
-void main(){
-  float n = noise(vPos * 3.0 + uTime * uPulse);
-  float intensity = smoothstep(0.2, 0.8, n) * uIntensity;
-  vec3 col = uColor * intensity;
-  gl_FragColor = vec4(col, 1.0);
+void main() {
+  float dist = distance(gl_PointCoord, vec2(0.5));
+  if (dist > 0.5) discard;
+  gl_FragColor = vec4(vec3(1.0), 1.0);
 }
 `;
