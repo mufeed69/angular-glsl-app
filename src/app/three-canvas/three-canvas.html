@@ -1,0 +1,21 @@
+<div class="canvas-wrapper" #container>
+  <div class="ui">
+    <div class="row">
+      <label>Orb Color
+        <input type="color" [value]="orbColor" (input)="orbColor = $any($event.target).value; updateColor(orbColor)" />
+      </label>
+    </div>
+    <div class="row">
+      <label>Intensity
+        <input type="range" min="0" max="1" step="0.01" [value]="intensity" (input)="intensity = +$any($event.target).value; updateIntensity(intensity)" />
+      </label>
+      <span>{{ intensity.toFixed(2) }}</span>
+    </div>
+    <div class="row">
+      <label>Pulse Speed
+        <input type="range" min="0" max="5" step="0.01" [value]="pulse" (input)="pulse = +$any($event.target).value; updatePulse(pulse)" />
+      </label>
+      <span>{{ pulse.toFixed(2) }}</span>
+    </div>
+  </div>
+</div>
