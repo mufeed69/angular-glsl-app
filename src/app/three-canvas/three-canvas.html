@@ -2,8 +2,8 @@
   <div #container class="canvas-container"></div>
 
   <div class="overlay">
-    <h1 class="title">Starport — interactive header</h1>
-    <p class="subtitle">A Three.js scene with animated stars & a 3D object</p>
+    <h1 class="title">Solar System Explorer</h1>
+    <p class="subtitle">Interact with planets, moons & stars in 3D</p>
 
     <div class="controls">
       <label>Speed
@@ -16,7 +16,9 @@
     </div>
 
     <div class="cta">
-      <button class="glass" (click)="focusObject()">Focus Object</button>
+      <button (click)="toggleFocus()" [disabled]="isAnimating">
+        {{ isFocused ? 'Unfocus Earth' : 'Focus Earth' }}
+      </button>
     </div>
   </div>
 </div>

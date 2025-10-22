@@ -84,6 +84,8 @@ span {
 label { display: flex; gap: 8px; align-items: center; font-size: 0.95rem; color: #e6f3ff; }
 input[type="range"] { width: 160px; }
 button { cursor: pointer; padding: 8px 12px; border-radius: 10px; background: rgba(255,255,255,0.06); color: white; border: 1px solid rgba(255,255,255,0.06); }
+button:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.1); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .cta { margin-top: 18px; pointer-events: auto; }
 
