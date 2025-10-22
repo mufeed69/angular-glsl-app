@@ -1,16 +1,22 @@
-<div class="canvas-wrapper" #container>
-  <div class="ui">
-    <div class="row">
+<div class="three-wrap">
+  <div #container class="canvas-container"></div>
+
+  <div class="overlay">
+    <h1 class="title">Starport — interactive header</h1>
+    <p class="subtitle">A Three.js scene with animated stars & a 3D object</p>
+
+    <div class="controls">
       <label>Speed
-        <input type="range" min="0.5" max="10" step="0.1" [value]="speed" (input)="updateSpeed(+($any($event.target).value))" />
+        <input type="range" min="0" max="6" step="0.1" [value]="speed" (input)="updateSpeed($any($event.target).value)" />
       </label>
-      <span>{{ speed.toFixed(1) }}</span>
-    </div>
-    <div class="row">
       <label>Density
-        <input type="range" min="500" max="5000" step="100" [value]="density" (input)="updateDensity(+($any($event.target).value))" />
+        <input type="range" min="100" max="6000" step="100" [value]="density" (change)="updateDensity($any($event.target).value)" />
       </label>
-      <span>{{ density }}</span>
+      <button (click)="togglePause()">{{ paused ? 'Resume' : 'Pause' }}</button>
+    </div>
+
+    <div class="cta">
+      <button class="glass" (click)="focusObject()">Focus Object</button>
     </div>
   </div>
 </div>
