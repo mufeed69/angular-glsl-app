@@ -1,23 +1,52 @@
 <div class="three-wrap">
+  <!-- Three.js Canvas Container -->
   <div #container class="canvas-container"></div>
 
+  <!-- Overlay UI -->
   <div class="overlay">
     <h1 class="title">Solar System Explorer</h1>
-    <p class="subtitle">Interact with planets, moons & stars in 3D</p>
+    <p class="subtitle">Interact with Earth, Moon & stars in 3D</p>
 
+    <!-- Star Controls -->
     <div class="controls">
-      <label>Speed
-        <input type="range" min="0" max="6" step="0.1" [value]="speed" (input)="updateSpeed($any($event.target).value)" />
-      </label>
-      <label>Density
-        <input type="range" min="100" max="6000" step="100" [value]="density" (change)="updateDensity($any($event.target).value)" />
-      </label>
-      <button (click)="togglePause()">{{ paused ? 'Resume' : 'Pause' }}</button>
-    </div>
+      <div>Star Controls: </div>
 
-    <div class="cta">
-      <button (click)="toggleFocus()" [disabled]="isAnimating">
-        {{ isFocused ? 'Unfocus Earth' : 'Focus Earth' }}
+      <div class="control-item">
+        <label>
+          <span>
+            Speed: <span>{{ speed }}</span>
+          </span>
+          <input
+            type="range"
+            min="0"
+            max="6"
+            step="0.1"
+            [value]="speed"
+            (input)="updateSpeed($any($event.target).value)"
+          />
+        </label>
+      </div>
+
+      <div class="control-item">
+        <label>
+          <span>
+            Density: <span>{{ density }}</span>
+          </span>
+          <input
+            type="range"
+            min="100"
+            max="6000"
+            step="100"
+            [value]="density"
+            (change)="updateDensity($any($event.target).value)"
+          />
+        </label>
+      </div>
+
+    </div>
+    <div class="control-buttons">
+      <button (click)="togglePause()">
+        {{ paused ? 'Resume' : 'Pause' }} Animation
       </button>
     </div>
   </div>

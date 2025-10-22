@@ -19,19 +19,14 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 export class ThreeCanvasComponent implements OnInit, OnDestroy {
   @ViewChild('container', { static: true }) container!: ElementRef<HTMLDivElement>;
 
-  // Three essentials
   private renderer!: THREE.WebGLRenderer;
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
-
-  // Optional controls
   private controls?: OrbitControls;
 
-  // stars
   private stars?: THREE.Points;
   private starMaterial!: THREE.ShaderMaterial;
 
-  // objects
   private earth?: THREE.Mesh;
   private moon?: THREE.Mesh;
   private torus?: THREE.Mesh;
@@ -41,22 +36,19 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
 
   private frameId: number | null = null;
   private startTime = performance.now();
+  private pausedTime = 0;
 
-  // UI
   public speed = 2.0;
   public density = 2000;
   public paused = false;
   public isFocused = false;
-  public isAnimating = false;
 
-  // uniforms shared with star shader
   private uniforms!: { uTime: { value: number }; uSpeed: { value: number } };
 
   constructor(private ngZone: NgZone) {}
 
   ngOnInit(): void {
     this.initScene();
-    // run animation outside angular to avoid change-detection thrash
     this.ngZone.runOutsideAngular(() => this.animate());
     window.addEventListener('resize', this.onResize);
   }
@@ -64,33 +56,24 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
   private initScene() {
     const el = this.container.nativeElement;
 
-    // Renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    // ensure the canvas covers container
     this.renderer.domElement.style.display = 'block';
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(el.clientWidth, el.clientHeight, false);
     this.renderer.setClearColor(0x000000, 0.0);
     el.appendChild(this.renderer.domElement);
 
-    // Scene & Camera
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, el.clientWidth / el.clientHeight, 0.1, 2000);
     this.camera.position.set(0, 0, 60);
 
-    // Uniforms
     this.uniforms = { uTime: { value: 0 }, uSpeed: { value: this.speed } };
 
-    // Star material and stars
     this.createStarMaterial();
     this.createStars(this.density);
-
-    // Earth, moon, torus
     this.createEarth();
     this.createMoon();
-    // this.createTorus(); // enable if needed
 
-    // Lights
     this.ambientLight = new THREE.AmbientLight(0xffffff, 1.15);
     this.scene.add(this.ambientLight);
 
@@ -98,11 +81,10 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     this.pointLight.position.set(30, 20, 40);
     this.scene.add(this.pointLight);
 
-    // Optional controls (commented by default)
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
-    this.controls.maxDistance = 100;
+    this.controls.maxDistance = 500;
     this.controls.minDistance = 20;
   }
 
@@ -118,15 +100,12 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
   }
 
   private createStars(count: number) {
-    // clamp to reasonable bounds
     const safeCount = Math.max(0, Math.min(20000, Math.floor(count)));
 
-    // dispose previous geometry (keep material for reuse)
     if (this.stars) {
       const old = this.stars;
       this.scene.remove(old);
-      if (old.geometry) old.geometry.dispose();
-      // don't dispose starMaterial here because we reuse it
+      old.geometry.dispose();
       this.stars = undefined;
     }
 
@@ -134,14 +113,14 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     const positions = new Float32Array(safeCount * 3);
     const seed = new Float32Array(safeCount);
 
-    // produce an oval distribution (wider in X than Y)
     for (let i = 0; i < safeCount; i++) {
-      const rx = (Math.random() - 0.5) * 240; // x range
-      const ry = (Math.random() - 0.5) * 120; // y smaller -> oval
-      const rz = -Math.random() * 800; // z further out
-      positions[i * 3] = rx;
-      positions[i * 3 + 1] = ry;
-      positions[i * 3 + 2] = rz;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const radius = 100 + Math.random() * 400;
+
+      positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+      positions[i * 3 + 2] = radius * Math.cos(phi);
       seed[i] = Math.random();
     }
 
@@ -162,12 +141,12 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
 
   private createEarth() {
     const geo = new THREE.SphereGeometry(10, 64, 64);
-    const textureLoader = new THREE.TextureLoader();
+    const loader = new THREE.TextureLoader();
     const mat = new THREE.MeshStandardMaterial({
-      map: textureLoader.load('/earth/earth_daymap.jpg'),
-      normalMap: textureLoader.load('/earth/earth_normal_map.jpg'),
-      roughnessMap: textureLoader.load('/earth/earth_specular_map.jpg'),
-      displacementMap: textureLoader.load('/earth/earth_displacment.jpg'),
+      map: loader.load('/earth/earth_daymap.jpg'),
+      normalMap: loader.load('/earth/earth_normal_map.jpg'),
+      roughnessMap: loader.load('/earth/earth_specular_map.jpg'),
+      displacementMap: loader.load('/earth/earth_displacment.jpg'),
       displacementScale: 1.5,
       roughness: 1,
       side: THREE.FrontSide
@@ -179,10 +158,10 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
 
   private createMoon() {
     const geo = new THREE.SphereGeometry(6, 64, 64);
-    const textureLoader = new THREE.TextureLoader();
+    const loader = new THREE.TextureLoader();
     const mat = new THREE.MeshStandardMaterial({
-      map: textureLoader.load('/moon/moon.jpg'),
-      displacementMap: textureLoader.load('/moon/displacement.jpg'),
+      map: loader.load('/moon/moon.jpg'),
+      displacementMap: loader.load('/moon/displacement.jpg'),
       displacementScale: 1.5,
       roughness: 1,
       side: THREE.FrontSide
@@ -193,52 +172,52 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
   }
 
   private animate = () => {
-    if (this.paused) {
-      this.frameId = requestAnimationFrame(this.animate);
-      return;
-    }
-
     this.frameId = requestAnimationFrame(this.animate);
+
     const now = performance.now();
-    this.uniforms.uTime.value = (now - this.startTime) * 0.001;
+    const effectiveTime = this.paused ? this.pausedTime : (now - this.startTime) * 0.001;
+
+    if (this.paused) this.pausedTime = effectiveTime;
+
+    this.uniforms.uTime.value = effectiveTime;
     this.uniforms.uSpeed.value = this.speed;
 
-    // CPU-side star movement (z every 3rd element)
-    if (this.stars) {
-      const positionsAttr = this.stars.geometry.getAttribute('position') as THREE.BufferAttribute;
-      const arr = positionsAttr.array as Float32Array;
-      const len = arr.length;
-      const delta = this.speed * 0.12;
-      for (let i = 2; i < len; i += 3) {
-        arr[i] += delta;
-        if (arr[i] > 40) arr[i] = -800 + Math.random() * 20;
+    if (!this.paused) {
+      if (this.stars) {
+        const positionsAttr = this.stars.geometry.getAttribute('position') as THREE.BufferAttribute;
+        const arr = positionsAttr.array as Float32Array;
+        const rotSpeed = this.speed * 0.0002;
+        for (let i = 0; i < arr.length; i += 3) {
+          const x = arr[i];
+          const z = arr[i + 2];
+          const cos = Math.cos(rotSpeed);
+          const sin = Math.sin(rotSpeed);
+          arr[i] = x * cos - z * sin;
+          arr[i + 2] = x * sin + z * cos;
+        }
+        positionsAttr.needsUpdate = true;
       }
-      positionsAttr.needsUpdate = true;
+
+      if (this.earth) {
+        this.earth.rotation.x += 0.004 * (1 + this.speed * 0.05);
+        this.earth.rotation.y += 0.01 * (1 + this.speed * 0.04);
+        this.earth.position.y = Math.sin(effectiveTime * 0.7) * 1.2;
+      }
+
+      if (this.moon) {
+        this.moon.rotation.y += 0.006 * (1 + this.speed * 0.03);
+        const t = effectiveTime * 0.3;
+        this.moon.position.set(Math.cos(t) * 50, Math.sin(t * 0.6) * 6, Math.sin(t) * 10);
+      }
+
+      if (this.torus) {
+        this.torus.rotation.x += 0.004 * (1 + this.speed * 0.05);
+        this.torus.rotation.y += 0.01 * (1 + this.speed * 0.04);
+        this.torus.position.y = Math.sin(effectiveTime * 0.7) * 1.2;
+      }
     }
 
-    // torus animation
-    if (this.torus) {
-      this.torus.rotation.x += 0.004 * (1 + this.speed * 0.05);
-      this.torus.rotation.y += 0.01 * (1 + this.speed * 0.04);
-      this.torus.position.y = Math.sin(this.uniforms.uTime.value * 0.7) * 1.2;
-    }
-
-    if (this.earth) {
-      this.earth.rotation.x += 0.004 * (1 + this.speed * 0.05);
-      this.earth.rotation.y += 0.01 * (1 + this.speed * 0.04);
-      this.earth.position.y = Math.sin(this.uniforms.uTime.value * 0.7) * 1.2;
-    }
-
-    if (this.moon) {
-      this.moon.rotation.y += 0.006 * (1 + this.speed * 0.03);
-      // basic orbit
-      const t = this.uniforms.uTime.value * 0.3;
-      this.moon.position.set(Math.cos(t) * 50, Math.sin(t * 0.6) * 6, Math.sin(t) * 10);
-    }
-
-    // update controls if enabled
-    if (this.controls) this.controls.update();
-
+    this.controls?.update();
     this.renderer.render(this.scene, this.camera);
   };
 
@@ -266,40 +245,23 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
 
   public togglePause() {
     this.paused = !this.paused;
+    if (!this.paused) this.startTime = performance.now() - this.pausedTime * 1000;
   }
 
   public toggleFocus() {
-    // avoid starting another animation while one is running
-    if (this.isAnimating) return;
-
-    // desired focus state after this click
-    const nextFocus = !this.isFocused;
-
-    // immediately update state so button label changes right away
-    this.isFocused = nextFocus;
-    this.isAnimating = true;
-
+    this.isFocused = !this.isFocused;
     const startZ = this.camera.position.z;
-    const targetZ = nextFocus ? 30 : 60; // zoom in if focusing, zoom out if unfocusing
+    const targetZ = 30;
     const duration = 600;
     const t0 = performance.now();
 
     const tick = () => {
-      const t = Math.min(2, (performance.now() - t0) / duration);
+      const elapsed = performance.now() - t0;
+      const t = Math.min(1, elapsed / duration);
       const eased = 1 - Math.pow(1 - t, 3);
       this.camera.position.z = startZ + (targetZ - startZ) * eased;
 
-      console.log('t >>', t)
-      if (t < 1) {
-        requestAnimationFrame(tick);
-      } else {
-        console.log('i am here')
-        // animation finished
-        // tell Angular to detect this change
-        this.ngZone.run(() => {
-          this.isAnimating = false;
-        });
-      }
+      if (t < 1) requestAnimationFrame(tick);
     };
 
     requestAnimationFrame(tick);
@@ -309,65 +271,30 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     window.removeEventListener('resize', this.onResize);
     if (this.frameId != null) cancelAnimationFrame(this.frameId);
 
-    // dispose stars and geometry (keep starMaterial disposed below)
-    if (this.stars) {
-      if (this.stars.geometry) this.stars.geometry.dispose();
-      this.scene.remove(this.stars);
-      this.stars = undefined;
-    }
-
-    // dispose torus
-    if (this.torus) {
-      if (this.torus.geometry) this.torus.geometry.dispose();
-      if (Array.isArray((this.torus.material as any))) {
-        (this.torus.material as any).forEach((m: THREE.Material) => m.dispose());
+    [this.stars, this.torus, this.earth, this.moon].forEach(obj => {
+      if (!obj) return;
+      obj.geometry.dispose();
+      if (Array.isArray((obj.material as any))) {
+        (obj.material as any).forEach((m: THREE.Material) => m.dispose());
       } else {
-        (this.torus.material as THREE.Material).dispose();
+        (obj.material as THREE.Material).dispose();
       }
-      this.scene.remove(this.torus);
-      this.torus = undefined;
-    }
+      this.scene.remove(obj);
+    });
 
-    // earth
-    if (this.earth) {
-      if (this.earth.geometry) this.earth.geometry.dispose();
-      if (Array.isArray((this.earth.material as any))) {
-        (this.earth.material as any).forEach((m: THREE.Material) => m.dispose());
-      } else {
-        (this.earth.material as THREE.Material).dispose();
-      }
-      this.scene.remove(this.earth);
-      this.earth = undefined;
-    }
+    this.stars = this.torus = this.earth = this.moon = undefined;
 
-    // moon
-    if (this.moon) {
-      if (this.moon.geometry) this.moon.geometry.dispose();
-      if (Array.isArray((this.moon.material as any))) {
-        (this.moon.material as any).forEach((m: THREE.Material) => m.dispose());
-      } else {
-        (this.moon.material as THREE.Material).dispose();
-      }
-      this.scene.remove(this.moon);
-      this.moon = undefined;
-    }
+    this.starMaterial?.dispose();
 
-    // dispose star material
-    if (this.starMaterial) this.starMaterial.dispose();
-
-    // renderer cleanup
     if (this.renderer) {
       const canvas = this.renderer.domElement;
-      if (canvas && canvas.parentElement) canvas.parentElement.removeChild(canvas);
-      try {
-        (this.renderer as any).forceContextLoss();
-      } catch (e) {/* ignore */}
+      canvas?.parentElement?.removeChild(canvas);
+      try { (this.renderer as any).forceContextLoss(); } catch {}
       this.renderer.dispose();
     }
   }
 }
 
-// ---------------- GLSL Shaders ----------------
 const VERTEX_SHADER = `
 precision highp float;
 uniform float uTime;
@@ -376,7 +303,6 @@ attribute float aSeed;
 
 void main() {
   vec3 pos = position;
-  // subtle twinkle using seed
   float tw = sin(uTime * (0.5 + aSeed * 2.0) * (0.3 + aSeed)) * 0.15 * aSeed;
   pos.z += tw * 10.0;
 
