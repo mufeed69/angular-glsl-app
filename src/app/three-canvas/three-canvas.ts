@@ -45,19 +45,18 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
 
   private uniforms!: { uTime: { value: number }; uSpeed: { value: number } };
 
-  // GPU trail geometry + shared
   private trailPlaneGeo?: THREE.PlaneGeometry;
   private meteorBaseMaterial?: THREE.ShaderMaterial;
   private lastFrameTimeMs = performance.now();
 
   private meteors: Array<{
-    group: THREE.Object3D;      // contains head (and trail if you add one later)
-    birth: number;              // time (s) when spawned
-    lifetime: number;           // seconds
+    group: THREE.Object3D;      
+    birth: number;             
+    lifetime: number;          
   }> = [];
 
-  private lastMeteorSpawn = 0;   // seconds
-  private nextMeteorDelay = 0.35; // seconds (randomized between 0.3 and 0.5)
+  private lastMeteorSpawn = 0;   
+  private nextMeteorDelay = 0.35;
 
   public spawnDelay = 0.3;
 
@@ -196,15 +195,11 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
   }
 
   private createMeteor(timeSec: number) {
-    // meteor parameters (seconds)
-    // Bigger + longer + slower meteors
-    const headRadius = this.randRange(3, 6);          // make head 3–6x larger
-    const speed = this.randRange(50, 90);             // slower so easier to see
-    const lifetime = this.randRange(1.5, 2.5);        // longer lifetime
-    const trailLen = speed * 0.3 + this.randRange(30, 60); // visibly long trail
+    const headRadius = this.randRange(3, 6);         
+    const speed = this.randRange(50, 90);            
+    const lifetime = this.randRange(1.5, 2.5);        
+    const trailLen = speed * 0.3 + this.randRange(30, 60);
 
-
-    // spawn geometry: random ring
     const spawnDistance = this.randRange(160, 320);
     const angle = this.randRange(0, Math.PI * 2);
     const startX = Math.cos(angle) * spawnDistance;
@@ -217,17 +212,13 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     const dir = new THREE.Vector3(targetX - startX, targetY - startY, targetZ - startZ).normalize();
     const velocity = dir.clone().multiplyScalar(speed);
 
-     // ensure we have plane geo and base material
-    // ensure our plane geometry has custom-named attributes that the shader expects
     if (!this.trailPlaneGeo) {
       this.trailPlaneGeo = new THREE.PlaneGeometry(1.0, 1.0, 1, 1);
-      // copy the built-in attribute names to our shader-specific attribute names
       const pos = this.trailPlaneGeo.getAttribute('position');
       const uv = this.trailPlaneGeo.getAttribute('uv');
       if (pos) this.trailPlaneGeo.setAttribute('aPosition', pos.clone());
       if (uv) this.trailPlaneGeo.setAttribute('aUv', uv.clone());
     }
-
 
     if (!this.meteorBaseMaterial) {
       this.meteorBaseMaterial = new THREE.ShaderMaterial({
@@ -271,19 +262,14 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     mesh.position.set(startX, startY, startZ);
 
     mesh.frustumCulled = false;  // crucial: shader offsets vertices; avoid CPU culling
-    mesh.renderOrder = 999;      // draw after other objects (helps additive layering)
+    mesh.renderOrder = 999;      // draw after other objects
 
-
-    // rotate mesh so local +X points along velocity direction:
     const velDir = velocity.clone().normalize();
-    // default local +X is (1,0,0); compute quaternion that rotates (1,0,0) -> velDir
     const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), velDir);
     mesh.quaternion.copy(q);
 
-    // optionally scale mesh to 1 — shader uses uTrailLength/uHeadSize for dimensioning
     mesh.scale.set(1, 1, 1);
 
-    // store meta
     (mesh as any).__meteor = {
       velocity,
       birth: timeSec,
@@ -304,7 +290,6 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     const effectiveTime = this.paused ? this.pausedTime : (now - this.startTime) * 0.001;
 
     if (this.paused) {
-      // keep pausedTime stable (optional, already set in togglePause too)
       this.pausedTime = effectiveTime;
     }
 
@@ -312,7 +297,6 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     this.uniforms.uSpeed.value = this.speed;
 
     if (!this.paused) {
-      // non-paused per-frame updates (stars, earth, moon, torus) — keep as you have
       if (this.stars) {
         const positionsAttr = this.stars.geometry.getAttribute('position') as THREE.BufferAttribute;
         const arr = positionsAttr.array as Float32Array;
@@ -347,28 +331,23 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
       }
     }
 
-    // compute deltaSeconds (guarded so pausing won't accidentally move objects)
     const nowMs = performance.now();
     let deltaSeconds = 0;
     if (!this.paused) {
       deltaSeconds = Math.min(0.1, (nowMs - this.lastFrameTimeMs) / 1000);
       this.lastFrameTimeMs = nowMs;
     } else {
-      // keep lastFrameTimeMs fresh so delta doesn't accumulate when unpausing
       this.lastFrameTimeMs = nowMs;
     }
 
-    const timeSec = effectiveTime; // seconds
+    const timeSec = effectiveTime;
 
-    // spawn meteors only when not paused
     if (timeSec - this.lastMeteorSpawn > this.nextMeteorDelay) {
       this.createMeteor(timeSec);
       this.lastMeteorSpawn = timeSec;
       this.nextMeteorDelay = this.spawnDelay * this.randRange(0.8, 1.2);
     }
 
-
-    // update meteors: advance positions only if not paused (and still update uniforms that rely on time)
     for (let i = this.meteors.length - 1; i >= 0; i--) {
       const m = this.meteors[i];
       const mesh = m.group as THREE.Mesh;
@@ -376,14 +355,9 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
       if (!meta) continue;
 
       if (!this.paused) {
-        // advance position by real delta
         mesh.position.addScaledVector(meta.velocity, deltaSeconds);
-
-        // (optional) gravity/acceleration code would run here if you use it:
-        // meta.velocity.addScaledVector(gravity, deltaSeconds);
       }
 
-      // update shader time uniform (timeSec is frozen while paused, so the shader stays visually paused)
       if (meta.mat && meta.mat.uniforms) {
         if (meta.mat.uniforms.uTime) meta.mat.uniforms.uTime.value = timeSec;
         if (meta.mat.uniforms.uOpacity) {
@@ -394,7 +368,6 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
         }
       }
 
-      // remove expired
       const age = timeSec - meta.birth;
       if (age > meta.lifetime) {
         mesh.traverse((o) => {
@@ -441,11 +414,9 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     this.paused = !this.paused;
 
     if (this.paused) {
-      // record current effective time immediately and freeze lastFrameTimeMs
       this.pausedTime = (performance.now() - this.startTime) * 0.001;
       this.lastFrameTimeMs = performance.now();
     } else {
-      // resume: adjust startTime so effectiveTime continues from pausedTime
       this.startTime = performance.now() - this.pausedTime * 1000;
       this.lastFrameTimeMs = performance.now();
     }
