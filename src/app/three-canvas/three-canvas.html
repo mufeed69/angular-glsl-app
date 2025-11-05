@@ -5,17 +5,15 @@
   <!-- Overlay UI -->
   <div class="overlay">
     <h1 class="title">Solar System Explorer</h1>
-    <p class="subtitle">Interact with Earth, Moon & stars in 3D</p>
+    <p class="subtitle">Explore Earth, Moon, stars, and falling meteors in 3D.</p>
 
     <!-- Star Controls -->
     <div class="controls">
-      <div>Star Controls: </div>
+      <div class="controls-header">Star Controls</div>
 
       <div class="control-item">
         <label>
-          <span>
-            Speed: <span>{{ speed }}</span>
-          </span>
+          <span>Speed: <strong>{{ speed }}</strong></span>
           <input
             type="range"
             min="0"
@@ -29,9 +27,7 @@
 
       <div class="control-item">
         <label>
-          <span>
-            Density: <span>{{ density }}</span>
-          </span>
+          <span>Density: <strong>{{ density }}</strong></span>
           <input
             type="range"
             min="100"
@@ -42,11 +38,35 @@
           />
         </label>
       </div>
-
     </div>
+
+    <!-- Meteor Controls -->
+    <!-- <div class="controls">
+      <div class="controls-header">Meteor Controls</div>
+
+      <div class="control-item">
+        <label>
+          Meteor Spawn Delay: {{ spawnDelay.toFixed(2) }}s
+          <input 
+            type="range" 
+            min="0.05" 
+            max="1.5" 
+            step="0.05"
+            [value]="spawnDelay"
+            (input)="updateSpawnDelay($any($event.target).value)"
+          />
+        </label>
+      </div>
+    </div> -->
+
+    <!-- Utility Buttons -->
     <div class="control-buttons">
       <button (click)="togglePause()">
         {{ paused ? 'Resume' : 'Pause' }} Animation
+      </button>
+
+      <button (click)="toggleFocus()">
+        Focus Earth
       </button>
     </div>
   </div>

@@ -45,7 +45,11 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
 
   private uniforms!: { uTime: { value: number }; uSpeed: { value: number } };
 
-  // add these fields to the class
+  // GPU trail geometry + shared
+  private trailPlaneGeo?: THREE.PlaneGeometry;
+  private meteorBaseMaterial?: THREE.ShaderMaterial;
+  private lastFrameTimeMs = performance.now();
+
   private meteors: Array<{
     group: THREE.Object3D;      // contains head (and trail if you add one later)
     birth: number;              // time (s) when spawned
@@ -54,9 +58,8 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
 
   private lastMeteorSpawn = 0;   // seconds
   private nextMeteorDelay = 0.35; // seconds (randomized between 0.3 and 0.5)
-  private meteorSpriteTex?: THREE.Texture;
-  private lastFrameTimeMs = performance.now();
 
+  public spawnDelay = 0.3;
 
   constructor(private ngZone: NgZone) {}
 
@@ -99,27 +102,14 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     this.controls.dampingFactor = 0.05;
     this.controls.maxDistance = 500;
     this.controls.minDistance = 20;
-
-    // in initScene after renderer created:
-    this.meteorSpriteTex = this.makeRadialTexture(128);
   }
 
-  private makeRadialTexture(size = 128) {
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = size;
-    const ctx = canvas.getContext('2d')!;
-    const cx = size / 2;
-    const cy = size / 2;
-    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, size / 2);
-    grad.addColorStop(0, 'rgba(255,200,120,1)');
-    grad.addColorStop(0.25, 'rgba(255,120,60,0.9)');
-    grad.addColorStop(0.6, 'rgba(255,80,30,0.5)');
-    grad.addColorStop(1, 'rgba(255,80,30,0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, size, size);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    return tex;
+  private randRange(min: number, max: number) {
+    return Math.random() * (max - min) + min;
+  }
+
+  public updateSpawnDelay(v: number | string) {
+    this.spawnDelay = typeof v === 'string' ? parseFloat(v) : v;
   }
 
   private createStarMaterial() {
@@ -205,73 +195,107 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     this.scene.add(this.moon);
   }
 
-  private randRange(min: number, max: number) {
-    return Math.random() * (max - min) + min;
-  }
+  private createMeteor(timeSec: number) {
+    // meteor parameters (seconds)
+    // Bigger + longer + slower meteors
+    const headRadius = this.randRange(3, 6);          // make head 3–6x larger
+    const speed = this.randRange(50, 90);             // slower so easier to see
+    const lifetime = this.randRange(1.5, 2.5);        // longer lifetime
+    const trailLen = speed * 0.3 + this.randRange(30, 60); // visibly long trail
 
-  private createMeteor(nowSec: number) {
-    // meteor parameters
-    const headRadius = this.randRange(0.6, 1.6);
-    const speed = this.randRange(60, 140); // world units per second
-    const lifetime = this.randRange(0.9, 1.6); // seconds
 
-    // spawn start position: somewhere tall/left/right in the sky relative to camera
-    // pick a ring around origin at some distance and angle, then aim roughly toward origin
-    const spawnDistance = this.randRange(180, 320);
+    // spawn geometry: random ring
+    const spawnDistance = this.randRange(160, 320);
     const angle = this.randRange(0, Math.PI * 2);
     const startX = Math.cos(angle) * spawnDistance;
-    const startY = this.randRange(30, 150); // spawn above plane
-    const startZ = Math.sin(angle) * spawnDistance - 40; // slightly behind plane like stars
+    const startY = this.randRange(30, 160);
+    const startZ = Math.sin(angle) * spawnDistance - 40;
 
-    // direction roughly toward center plus some variation
     const targetX = this.randRange(-10, 10);
     const targetY = this.randRange(-10, 10);
     const targetZ = this.randRange(-30, 30);
     const dir = new THREE.Vector3(targetX - startX, targetY - startY, targetZ - startZ).normalize();
+    const velocity = dir.clone().multiplyScalar(speed);
 
-    // head (bright, additive, slightly emissive look)
-    const headGeo = new THREE.SphereGeometry(headRadius, 12, 8);
-    const headMat = new THREE.MeshBasicMaterial({
-      color: 0xff4400,
-      transparent: true,
-      opacity: 1.0,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
-    });
-    const head = new THREE.Mesh(headGeo, headMat);
+     // ensure we have plane geo and base material
+    // ensure our plane geometry has custom-named attributes that the shader expects
+    if (!this.trailPlaneGeo) {
+      this.trailPlaneGeo = new THREE.PlaneGeometry(1.0, 1.0, 1, 1);
+      // copy the built-in attribute names to our shader-specific attribute names
+      const pos = this.trailPlaneGeo.getAttribute('position');
+      const uv = this.trailPlaneGeo.getAttribute('uv');
+      if (pos) this.trailPlaneGeo.setAttribute('aPosition', pos.clone());
+      if (uv) this.trailPlaneGeo.setAttribute('aUv', uv.clone());
+    }
 
-    // light/glow sprite (optional cheap glow)
-    const spriteMat = new THREE.SpriteMaterial({
-      map: this.meteorSpriteTex,
-      color: 0xff7744,
-      transparent: true,
-      opacity: 0.8,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
-    });
 
-    const glow = new THREE.Sprite(spriteMat);
-    glow.scale.set(headRadius * 6, headRadius * 6, 1.0);
-    glow.position.set(0, 0, 0);
+    if (!this.meteorBaseMaterial) {
+      this.meteorBaseMaterial = new THREE.ShaderMaterial({
+        vertexShader: METEOR_VERTEX_SHADER,
+        fragmentShader: METEOR_FRAGMENT_SHADER,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: false, 
+        uniforms: {
+          uTime: { value: 0.0 },
+          uBirth: { value: 0.0 },
+          uLifetime: { value: 1.0 },
+          uHeadSize: { value: 1.0 },
+          uTrailLength: { value: 10.0 },
+          uColor: { value: new THREE.Color(0xff5a00) },
+          uOpacity: { value: 1.0 }
+        },
+        side: THREE.DoubleSide
+      });
+    }
 
-    // group to hold head + glow, easier to rotate/orient
-    const group = new THREE.Object3D();
-    group.position.set(startX, startY, startZ);
-    head.position.set(0, 0, 0);
-    group.add(head);
-    group.add(glow);
 
-    // attach extra custom properties on group for update step
-    (group as any).__meteor = {
-      velocity: dir.multiplyScalar(speed),
-      headMat,
-      glowMat: spriteMat
+    // clone material for per-meteor uniforms (safe for small numbers)
+    const mat = this.meteorBaseMaterial!.clone();
+    // clone uniform objects so each meteor can own its own values
+    mat.uniforms = THREE.UniformsUtils.clone(this.meteorBaseMaterial!.uniforms);
+
+    // set only uniforms that actually exist on the material
+    if (mat.uniforms['uTime']) mat.uniforms['uTime'].value = timeSec;
+    if (mat.uniforms['uBirth']) mat.uniforms['uBirth'].value = timeSec;
+    if (mat.uniforms['uLifetime']) mat.uniforms['uLifetime'].value = lifetime;
+    if (mat.uniforms['uHeadSize']) mat.uniforms['uHeadSize'].value = headRadius;
+    if (mat.uniforms['uTrailLength']) mat.uniforms['uTrailLength'].value = trailLen;
+    if (mat.uniforms['uColor']) mat.uniforms['uColor'].value = new THREE.Color(0xff4a00);
+    if (mat.uniforms['uOpacity']) mat.uniforms['uOpacity'].value = 1.0;
+
+
+    const mesh = new THREE.Mesh(this.trailPlaneGeo, mat);
+    // set position at head location
+    mesh.position.set(startX, startY, startZ);
+
+    mesh.frustumCulled = false;  // crucial: shader offsets vertices; avoid CPU culling
+    mesh.renderOrder = 999;      // draw after other objects (helps additive layering)
+
+
+    // rotate mesh so local +X points along velocity direction:
+    const velDir = velocity.clone().normalize();
+    // default local +X is (1,0,0); compute quaternion that rotates (1,0,0) -> velDir
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), velDir);
+    mesh.quaternion.copy(q);
+
+    // optionally scale mesh to 1 — shader uses uTrailLength/uHeadSize for dimensioning
+    mesh.scale.set(1, 1, 1);
+
+    // store meta
+    (mesh as any).__meteor = {
+      velocity,
+      birth: timeSec,
+      lifetime,
+      headRadius,
+      trailLen,
+      mat
     };
 
-    this.scene.add(group);
-    this.meteors.push({ group, birth: nowSec, lifetime });
+    this.scene.add(mesh);
+    this.meteors.push({ group: mesh, birth: timeSec, lifetime });
   }
-
 
   private animate = () => {
     this.frameId = requestAnimationFrame(this.animate);
@@ -279,12 +303,16 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     const now = performance.now();
     const effectiveTime = this.paused ? this.pausedTime : (now - this.startTime) * 0.001;
 
-    if (this.paused) this.pausedTime = effectiveTime;
+    if (this.paused) {
+      // keep pausedTime stable (optional, already set in togglePause too)
+      this.pausedTime = effectiveTime;
+    }
 
     this.uniforms.uTime.value = effectiveTime;
     this.uniforms.uSpeed.value = this.speed;
 
     if (!this.paused) {
+      // non-paused per-frame updates (stars, earth, moon, torus) — keep as you have
       if (this.stars) {
         const positionsAttr = this.stars.geometry.getAttribute('position') as THREE.BufferAttribute;
         const arr = positionsAttr.array as Float32Array;
@@ -319,49 +347,57 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
       }
     }
 
-    // get delta in seconds (frame-stable)
+    // compute deltaSeconds (guarded so pausing won't accidentally move objects)
     const nowMs = performance.now();
-    const deltaSeconds = Math.min(0.1, (nowMs - this.lastFrameTimeMs) / 1000); // clamp to avoid big jumps
-    this.lastFrameTimeMs = nowMs;
-
-    // Use effectiveTime (seconds) for spawn & age calculations
-    const timeSec = effectiveTime;
-
-    // spawn if enough time passed (both in seconds)
-    if (timeSec - this.lastMeteorSpawn > this.nextMeteorDelay) {
-      this.createMeteor(timeSec); // pass seconds, not ms
-      this.lastMeteorSpawn = timeSec;
-      this.nextMeteorDelay = this.randRange(0.3, 0.5);
+    let deltaSeconds = 0;
+    if (!this.paused) {
+      deltaSeconds = Math.min(0.1, (nowMs - this.lastFrameTimeMs) / 1000);
+      this.lastFrameTimeMs = nowMs;
+    } else {
+      // keep lastFrameTimeMs fresh so delta doesn't accumulate when unpausing
+      this.lastFrameTimeMs = nowMs;
     }
 
-    // update meteors: move, fade, remove
+    const timeSec = effectiveTime; // seconds
+
+    // spawn meteors only when not paused
+    if (timeSec - this.lastMeteorSpawn > this.nextMeteorDelay) {
+      this.createMeteor(timeSec);
+      this.lastMeteorSpawn = timeSec;
+      this.nextMeteorDelay = this.spawnDelay * this.randRange(0.8, 1.2);
+    }
+
+
+    // update meteors: advance positions only if not paused (and still update uniforms that rely on time)
     for (let i = this.meteors.length - 1; i >= 0; i--) {
       const m = this.meteors[i];
-      const age = timeSec - m.birth; // seconds
-      const t = age / m.lifetime;
-
-      const meta = (m.group as any).__meteor;
+      const mesh = m.group as THREE.Mesh;
+      const meta = (mesh as any).__meteor;
       if (!meta) continue;
 
-      // integrate with real delta
-      m.group.position.addScaledVector(meta.velocity, deltaSeconds);
+      if (!this.paused) {
+        // advance position by real delta
+        mesh.position.addScaledVector(meta.velocity, deltaSeconds);
 
-      // fade out
-      const headMat: THREE.MeshBasicMaterial = meta.headMat;
-      const glowMat: THREE.SpriteMaterial = meta.glowMat;
-      const fade = 1.0 - Math.min(1, t);
-      headMat.opacity = fade;
-      glowMat.opacity = 0.6 * fade;
+        // (optional) gravity/acceleration code would run here if you use it:
+        // meta.velocity.addScaledVector(gravity, deltaSeconds);
+      }
 
-      // orient along velocity
-      const velDir = meta.velocity.clone().normalize();
-      const up = new THREE.Vector3(0, 1, 0);
-      const q = new THREE.Quaternion().setFromUnitVectors(up, velDir);
-      m.group.quaternion.copy(q);
+      // update shader time uniform (timeSec is frozen while paused, so the shader stays visually paused)
+      if (meta.mat && meta.mat.uniforms) {
+        if (meta.mat.uniforms.uTime) meta.mat.uniforms.uTime.value = timeSec;
+        if (meta.mat.uniforms.uOpacity) {
+          const age = timeSec - meta.birth;
+          const t = age / meta.lifetime;
+          const fade = 1.0 - Math.min(1, t);
+          meta.mat.uniforms.uOpacity.value = fade;
+        }
+      }
 
       // remove expired
-      if (age > m.lifetime) {
-        m.group.traverse((o) => {
+      const age = timeSec - meta.birth;
+      if (age > meta.lifetime) {
+        mesh.traverse((o) => {
           if ((o as THREE.Mesh).geometry) (o as THREE.Mesh).geometry.dispose();
           if ((o as any).material) {
             const mat = (o as any).material;
@@ -369,7 +405,7 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
             else mat.dispose();
           }
         });
-        this.scene.remove(m.group);
+        this.scene.remove(mesh);
         this.meteors.splice(i, 1);
       }
     }
@@ -377,6 +413,7 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     this.controls?.update();
     this.renderer.render(this.scene, this.camera);
   };
+
 
   private onResize = () => {
     const el = this.container?.nativeElement;
@@ -402,8 +439,18 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
 
   public togglePause() {
     this.paused = !this.paused;
-    if (!this.paused) this.startTime = performance.now() - this.pausedTime * 1000;
+
+    if (this.paused) {
+      // record current effective time immediately and freeze lastFrameTimeMs
+      this.pausedTime = (performance.now() - this.startTime) * 0.001;
+      this.lastFrameTimeMs = performance.now();
+    } else {
+      // resume: adjust startTime so effectiveTime continues from pausedTime
+      this.startTime = performance.now() - this.pausedTime * 1000;
+      this.lastFrameTimeMs = performance.now();
+    }
   }
+
 
   public toggleFocus() {
     this.isFocused = !this.isFocused;
@@ -482,3 +529,76 @@ void main() {
   if (gl_FragColor.a < 0.01) discard;
 }
 `;
+
+
+const METEOR_VERTEX_SHADER = `
+precision highp float;
+
+attribute vec3 aPosition;
+attribute vec2 aUv;
+
+uniform float uTime;        // seconds
+uniform float uBirth;       // meteor birth time (seconds)
+uniform float uLifetime;    // meteor lifetime (seconds)
+uniform float uHeadSize;    // head radius (local units)
+uniform float uTrailLength; // trail length (local units)
+
+varying float vAge;
+varying float vHeadFactor;
+varying float vAlong;
+varying vec2 vUV;
+
+void main() {
+  float age = max(0.0, uTime - uBirth);
+  vAge = age;
+  vUV = aUv;
+
+  // aPosition.x is -0.5..+0.5 -> convert to 0..1 along trail
+  float along = (aPosition.x + 0.5);
+  vAlong = along;
+
+  // head factor: 1 near head (along == 0), 0 near tail
+  vHeadFactor = smoothstep(0.0, 0.2, 1.0 - along);
+
+  // local offsets: head at local origin, tail at -uTrailLength along local +X
+  float xOff = -along * uTrailLength;
+  float yOff = aPosition.y * uHeadSize;
+
+  vec3 localPos = vec3(xOff, yOff, 0.0);
+
+  vec4 mvPos = modelViewMatrix * vec4(localPos, 1.0);
+  gl_Position = projectionMatrix * mvPos;
+}
+`;
+
+const METEOR_FRAGMENT_SHADER = `
+precision highp float;
+
+varying float vAge;
+varying float vHeadFactor;
+varying float vAlong;
+varying vec2 vUV;
+
+uniform float uLifetime;
+uniform vec3 uColor;
+uniform float uOpacity;
+
+void main() {
+  float y = vUV.y - 0.5;
+  float widthFall = smoothstep(0.6, 0.0, abs(y) * 2.0);
+
+  float tailFall = smoothstep(0.0, 1.0, vAlong);
+
+  float headBoost = pow(vHeadFactor, 1.4);
+
+  float lifeT = clamp(vAge / max(0.0001, uLifetime), 0.0, 1.0);
+  float lifeFade = 1.0 - lifeT;
+
+  vec3 col = uColor * (0.6 + 0.8 * headBoost) * mix(1.0, 0.6, tailFall);
+  float alpha = widthFall * (0.9 * headBoost + 0.4 * (1.0 - vHeadFactor)) * lifeFade * uOpacity;
+
+  if (alpha < 0.01) discard;
+  gl_FragColor = vec4(col, alpha);
+}
+`;
+
