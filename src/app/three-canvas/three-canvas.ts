@@ -45,6 +45,21 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
 
   private uniforms!: { uTime: { value: number }; uSpeed: { value: number } };
 
+  private trailPlaneGeo?: THREE.PlaneGeometry;
+  private meteorBaseMaterial?: THREE.ShaderMaterial;
+  private lastFrameTimeMs = performance.now();
+
+  private meteors: Array<{
+    group: THREE.Object3D;      
+    birth: number;             
+    lifetime: number;          
+  }> = [];
+
+  private lastMeteorSpawn = 0;   
+  private nextMeteorDelay = 0.35;
+
+  public spawnDelay = 0.3;
+
   constructor(private ngZone: NgZone) {}
 
   ngOnInit(): void {
@@ -86,6 +101,14 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     this.controls.dampingFactor = 0.05;
     this.controls.maxDistance = 500;
     this.controls.minDistance = 20;
+  }
+
+  private randRange(min: number, max: number) {
+    return Math.random() * (max - min) + min;
+  }
+
+  public updateSpawnDelay(v: number | string) {
+    this.spawnDelay = typeof v === 'string' ? parseFloat(v) : v;
   }
 
   private createStarMaterial() {
@@ -171,13 +194,104 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
     this.scene.add(this.moon);
   }
 
+  private createMeteor(timeSec: number) {
+    const headRadius = this.randRange(3, 6);         
+    const speed = this.randRange(50, 90);            
+    const lifetime = this.randRange(1.5, 2.5);        
+    const trailLen = speed * 0.3 + this.randRange(30, 60);
+
+    const spawnDistance = this.randRange(160, 320);
+    const angle = this.randRange(0, Math.PI * 2);
+    const startX = Math.cos(angle) * spawnDistance;
+    const startY = this.randRange(30, 160);
+    const startZ = Math.sin(angle) * spawnDistance - 40;
+
+    const targetX = this.randRange(-10, 10);
+    const targetY = this.randRange(-10, 10);
+    const targetZ = this.randRange(-30, 30);
+    const dir = new THREE.Vector3(targetX - startX, targetY - startY, targetZ - startZ).normalize();
+    const velocity = dir.clone().multiplyScalar(speed);
+
+    if (!this.trailPlaneGeo) {
+      this.trailPlaneGeo = new THREE.PlaneGeometry(1.0, 1.0, 1, 1);
+      const pos = this.trailPlaneGeo.getAttribute('position');
+      const uv = this.trailPlaneGeo.getAttribute('uv');
+      if (pos) this.trailPlaneGeo.setAttribute('aPosition', pos.clone());
+      if (uv) this.trailPlaneGeo.setAttribute('aUv', uv.clone());
+    }
+
+    if (!this.meteorBaseMaterial) {
+      this.meteorBaseMaterial = new THREE.ShaderMaterial({
+        vertexShader: METEOR_VERTEX_SHADER,
+        fragmentShader: METEOR_FRAGMENT_SHADER,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: false, 
+        uniforms: {
+          uTime: { value: 0.0 },
+          uBirth: { value: 0.0 },
+          uLifetime: { value: 1.0 },
+          uHeadSize: { value: 1.0 },
+          uTrailLength: { value: 10.0 },
+          uColor: { value: new THREE.Color(0xff5a00) },
+          uOpacity: { value: 1.0 }
+        },
+        side: THREE.DoubleSide
+      });
+    }
+
+
+    // clone material for per-meteor uniforms (safe for small numbers)
+    const mat = this.meteorBaseMaterial!.clone();
+    // clone uniform objects so each meteor can own its own values
+    mat.uniforms = THREE.UniformsUtils.clone(this.meteorBaseMaterial!.uniforms);
+
+    // set only uniforms that actually exist on the material
+    if (mat.uniforms['uTime']) mat.uniforms['uTime'].value = timeSec;
+    if (mat.uniforms['uBirth']) mat.uniforms['uBirth'].value = timeSec;
+    if (mat.uniforms['uLifetime']) mat.uniforms['uLifetime'].value = lifetime;
+    if (mat.uniforms['uHeadSize']) mat.uniforms['uHeadSize'].value = headRadius;
+    if (mat.uniforms['uTrailLength']) mat.uniforms['uTrailLength'].value = trailLen;
+    if (mat.uniforms['uColor']) mat.uniforms['uColor'].value = new THREE.Color(0xff4a00);
+    if (mat.uniforms['uOpacity']) mat.uniforms['uOpacity'].value = 1.0;
+
+
+    const mesh = new THREE.Mesh(this.trailPlaneGeo, mat);
+    // set position at head location
+    mesh.position.set(startX, startY, startZ);
+
+    mesh.frustumCulled = false;  // crucial: shader offsets vertices; avoid CPU culling
+    mesh.renderOrder = 999;      // draw after other objects
+
+    const velDir = velocity.clone().normalize();
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), velDir);
+    mesh.quaternion.copy(q);
+
+    mesh.scale.set(1, 1, 1);
+
+    (mesh as any).__meteor = {
+      velocity,
+      birth: timeSec,
+      lifetime,
+      headRadius,
+      trailLen,
+      mat
+    };
+
+    this.scene.add(mesh);
+    this.meteors.push({ group: mesh, birth: timeSec, lifetime });
+  }
+
   private animate = () => {
     this.frameId = requestAnimationFrame(this.animate);
 
     const now = performance.now();
     const effectiveTime = this.paused ? this.pausedTime : (now - this.startTime) * 0.001;
 
-    if (this.paused) this.pausedTime = effectiveTime;
+    if (this.paused) {
+      this.pausedTime = effectiveTime;
+    }
 
     this.uniforms.uTime.value = effectiveTime;
     this.uniforms.uSpeed.value = this.speed;
@@ -217,9 +331,62 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
       }
     }
 
+    const nowMs = performance.now();
+    let deltaSeconds = 0;
+    if (!this.paused) {
+      deltaSeconds = Math.min(0.1, (nowMs - this.lastFrameTimeMs) / 1000);
+      this.lastFrameTimeMs = nowMs;
+    } else {
+      this.lastFrameTimeMs = nowMs;
+    }
+
+    const timeSec = effectiveTime;
+
+    if (timeSec - this.lastMeteorSpawn > this.nextMeteorDelay) {
+      this.createMeteor(timeSec);
+      this.lastMeteorSpawn = timeSec;
+      this.nextMeteorDelay = this.spawnDelay * this.randRange(0.8, 1.2);
+    }
+
+    for (let i = this.meteors.length - 1; i >= 0; i--) {
+      const m = this.meteors[i];
+      const mesh = m.group as THREE.Mesh;
+      const meta = (mesh as any).__meteor;
+      if (!meta) continue;
+
+      if (!this.paused) {
+        mesh.position.addScaledVector(meta.velocity, deltaSeconds);
+      }
+
+      if (meta.mat && meta.mat.uniforms) {
+        if (meta.mat.uniforms.uTime) meta.mat.uniforms.uTime.value = timeSec;
+        if (meta.mat.uniforms.uOpacity) {
+          const age = timeSec - meta.birth;
+          const t = age / meta.lifetime;
+          const fade = 1.0 - Math.min(1, t);
+          meta.mat.uniforms.uOpacity.value = fade;
+        }
+      }
+
+      const age = timeSec - meta.birth;
+      if (age > meta.lifetime) {
+        mesh.traverse((o) => {
+          if ((o as THREE.Mesh).geometry) (o as THREE.Mesh).geometry.dispose();
+          if ((o as any).material) {
+            const mat = (o as any).material;
+            if (Array.isArray(mat)) mat.forEach((mm: THREE.Material) => mm.dispose());
+            else mat.dispose();
+          }
+        });
+        this.scene.remove(mesh);
+        this.meteors.splice(i, 1);
+      }
+    }
+
     this.controls?.update();
     this.renderer.render(this.scene, this.camera);
   };
+
 
   private onResize = () => {
     const el = this.container?.nativeElement;
@@ -245,8 +412,16 @@ export class ThreeCanvasComponent implements OnInit, OnDestroy {
 
   public togglePause() {
     this.paused = !this.paused;
-    if (!this.paused) this.startTime = performance.now() - this.pausedTime * 1000;
+
+    if (this.paused) {
+      this.pausedTime = (performance.now() - this.startTime) * 0.001;
+      this.lastFrameTimeMs = performance.now();
+    } else {
+      this.startTime = performance.now() - this.pausedTime * 1000;
+      this.lastFrameTimeMs = performance.now();
+    }
   }
+
 
   public toggleFocus() {
     this.isFocused = !this.isFocused;
@@ -325,3 +500,76 @@ void main() {
   if (gl_FragColor.a < 0.01) discard;
 }
 `;
+
+
+const METEOR_VERTEX_SHADER = `
+precision highp float;
+
+attribute vec3 aPosition;
+attribute vec2 aUv;
+
+uniform float uTime;        // seconds
+uniform float uBirth;       // meteor birth time (seconds)
+uniform float uLifetime;    // meteor lifetime (seconds)
+uniform float uHeadSize;    // head radius (local units)
+uniform float uTrailLength; // trail length (local units)
+
+varying float vAge;
+varying float vHeadFactor;
+varying float vAlong;
+varying vec2 vUV;
+
+void main() {
+  float age = max(0.0, uTime - uBirth);
+  vAge = age;
+  vUV = aUv;
+
+  // aPosition.x is -0.5..+0.5 -> convert to 0..1 along trail
+  float along = (aPosition.x + 0.5);
+  vAlong = along;
+
+  // head factor: 1 near head (along == 0), 0 near tail
+  vHeadFactor = smoothstep(0.0, 0.2, 1.0 - along);
+
+  // local offsets: head at local origin, tail at -uTrailLength along local +X
+  float xOff = -along * uTrailLength;
+  float yOff = aPosition.y * uHeadSize;
+
+  vec3 localPos = vec3(xOff, yOff, 0.0);
+
+  vec4 mvPos = modelViewMatrix * vec4(localPos, 1.0);
+  gl_Position = projectionMatrix * mvPos;
+}
+`;
+
+const METEOR_FRAGMENT_SHADER = `
+precision highp float;
+
+varying float vAge;
+varying float vHeadFactor;
+varying float vAlong;
+varying vec2 vUV;
+
+uniform float uLifetime;
+uniform vec3 uColor;
+uniform float uOpacity;
+
+void main() {
+  float y = vUV.y - 0.5;
+  float widthFall = smoothstep(0.6, 0.0, abs(y) * 2.0);
+
+  float tailFall = smoothstep(0.0, 1.0, vAlong);
+
+  float headBoost = pow(vHeadFactor, 1.4);
+
+  float lifeT = clamp(vAge / max(0.0001, uLifetime), 0.0, 1.0);
+  float lifeFade = 1.0 - lifeT;
+
+  vec3 col = uColor * (0.6 + 0.8 * headBoost) * mix(1.0, 0.6, tailFall);
+  float alpha = widthFall * (0.9 * headBoost + 0.4 * (1.0 - vHeadFactor)) * lifeFade * uOpacity;
+
+  if (alpha < 0.01) discard;
+  gl_FragColor = vec4(col, alpha);
+}
+`;
+

@@ -1,10 +1,9 @@
 import { Component, signal } from '@angular/core';
-import { RouterOutlet } from '@angular/router';
 import { ThreeCanvasComponent } from './three-canvas/three-canvas';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, ThreeCanvasComponent],
+  imports: [ThreeCanvasComponent],
   templateUrl: './app.html',
   styleUrl: './app.css'
 })
